@@ -13,15 +13,17 @@ namespace CoffeeShopManagement
         void AdjustStock(int quantity);
         void Display();
         int Id { get; }
+        string Category { get; }
     }
 
     public abstract class ProductBase : IOrderable
     {
         private static int _idCounter = 1;
-        public int Id { get; private set; }
-        public string Name { get; private set; }
-        public decimal Price { get; private set; }
-        public int Stock { get; private set; }
+        public int Id { get; protected set; }
+        public string Name { get; protected set; }
+        public decimal Price { get; set; }
+        public int Stock { get; protected set; }
+        public abstract string Category { get; }
 
         protected ProductBase(string name, decimal price, int stock)
         {
@@ -40,18 +42,19 @@ namespace CoffeeShopManagement
 
         public abstract void Display();
 
-        public virtual void AddToOrder(Order order)
+        public virtual void AddToOrder(Order order, int quantity = 1)
         {
-            if (Stock <= 0)
+            if (Stock < quantity)
                 throw new InvalidOperationException("Product out of stock");
 
-            order.AddProduct(this);
-            AdjustStock(-1);
+            order.AddProduct(this, quantity);
+            AdjustStock(-quantity);
         }
     }
 
     public class Coffee : ProductBase
     {
+        public override string Category => "Coffee";
         public string Size { get; private set; }
 
         public Coffee(string name, decimal price, int stock, string size)
@@ -62,70 +65,119 @@ namespace CoffeeShopManagement
 
         public override void Display()
         {
-            Console.WriteLine($"{Id}: {Name} ({Size}): ${Price} (Stock: {Stock})");
+            Console.WriteLine($"{Name} ({Size})");
         }
     }
 
-    public class FruitJuice : ProductBase
+    public class Snack : ProductBase
     {
-        public bool hasSugar { get; private set; }
+        public override string Category => "Snack";
+        public bool IsSweet { get; private set; }
 
-        public FruitJuice(string name, decimal price, int stock, bool hasSugar)
+        public Snack(string name, decimal price, int stock, bool isSweet)
             : base(name, price, stock)
         {
-            hasSugar = hasSugar ;
+            IsSweet = isSweet;
         }
 
         public override void Display()
         {
-            var sugarStatus = hasSugar ? "" : "Non-vegetarian";
-            Console.WriteLine($"{Id}: {Name} [{sugarStatus}]: ${Price} (Stock: {Stock})");
+            Console.WriteLine($"{Name} [{(IsSweet ? "Sweet" : "Non-sweet")}]");
+        }
+    }
+
+    public class Beverage : ProductBase
+    {
+        public override string Category => "Beverage";
+        public bool IsCold { get; private set; }
+
+        public Beverage(string name, decimal price, int stock, bool isCold)
+            : base(name, price, stock)
+        {
+            IsCold = isCold;
+        }
+
+        public override void Display()
+        {
+            Console.WriteLine($"{Name} ({(IsCold ? "Cold" : "Hot")})");
         }
     }
 
     public class Order
     {
-        private List<IOrderable> _products = new List<IOrderable>();
+        private List<OrderItem> _items = new List<OrderItem>();
         public DateTime OrderDate { get; private set; } = DateTime.Now;
-        public decimal TotalPrice => _products.Sum(p => p.Price);
+        public decimal TotalPrice => _items.Sum(i => i.Subtotal);
+        public int ItemCount => _items.Sum(i => i.Quantity);
+        public User User { get; set; }
 
-        public void AddProduct(IOrderable product)
+        public void AddProduct(IOrderable product, int quantity)
         {
-            _products.Add(product);
+            var existing = _items.FirstOrDefault(i => i.Product.Id == product.Id);
+            if (existing != null)
+            {
+                existing.Quantity += quantity;
+            }
+            else
+            {
+                _items.Add(new OrderItem(product, quantity));
+            }
         }
 
         public void DisplayOrder()
         {
-            if (_products.Count == 0)
+            Console.WriteLine($"\nOrder Date: {OrderDate:g}");
+            Console.WriteLine($"Customer: {User.Username}");
+            Console.WriteLine("Items:");
+            foreach (var item in _items)
             {
-                Console.WriteLine("No products in this order.");
-                return;
+                Console.WriteLine($"- {item.Product.Name} x{item.Quantity} @ {item.Product.Price:C}");
             }
+            Console.WriteLine($"Total: {TotalPrice:C}");
+        }
+    }
 
-            Console.WriteLine("Order Summary:");
-            foreach (var product in _products)
-            {
-                Console.WriteLine($"- {product.Name}: ${product.Price}");
-            }
-            Console.WriteLine($"Total Price: ${TotalPrice}");
-            Console.WriteLine($"Order Date: {OrderDate}");
+    public class OrderItem
+    {
+        public IOrderable Product { get; }
+        public int Quantity { get; set; }
+        public decimal Subtotal => Product.Price * Quantity;
+
+        public OrderItem(IOrderable product, int quantity)
+        {
+            Product = product;
+            Quantity = quantity;
         }
     }
 
     public abstract class User
     {
-        public string Username { get; private set; }
+        private static int _idCounter = 1;
+        public int Id { get; }
+        public string Username { get; }
+        public int LoyaltyPoints { get; protected set; }
         private string _password;
+        public abstract string Role { get; }
 
         protected User(string username, string password)
         {
+            Id = _idCounter++;
             Username = username;
             _password = password;
+            LoyaltyPoints = 0;
         }
 
-        public abstract string Role { get; }
-
         public bool Authenticate(string password) => _password == password;
+
+        public virtual void AddLoyaltyPoints(decimal amountSpent)
+        {
+            LoyaltyPoints += (int)(amountSpent / 5);
+        }
+
+        public void UpdatePassword(string newPassword)
+        {
+            _password = newPassword;
+        }
     }
 
     public class Admin : User
@@ -138,167 +190,208 @@ namespace CoffeeShopManagement
     {
         public Customer(string username, string password) : base(username, password) { }
         public override string Role => "customer";
+
+        public override void AddLoyaltyPoints(decimal amountSpent)
+        {
+            base.AddLoyaltyPoints(amountSpent);
+            Console.WriteLine($"Earned {LoyaltyPoints} loyalty points!");
+        }
+    }
+    #endregion
+
+    #region Factory Pattern Implementation
+    public interface IProductFactory
+    {
+        ProductBase CreateProduct(string name, decimal price, int stock, string additionalParam);
+    }
+
+    public class CoffeeFactory : IProductFactory
+    {
+        public ProductBase CreateProduct(string name, decimal price, int stock, string size)
+        {
+            return new Coffee(name, price, stock, size);
+        }
+    }
+
+    public class SnackFactory : IProductFactory
+    {
+        public ProductBase CreateProduct(string name, decimal price, int stock, string isSweet)
+        {
+            bool sweet = bool.Parse(isSweet);
+            return new Snack(name, price, stock, sweet);
+        }
+    }
+
+    public class BeverageFactory : IProductFactory
+    {
+        public ProductBase CreateProduct(string name, decimal price, int stock, string isCold)
+        {
+            bool cold = bool.Parse(isCold);
+            return new Beverage(name, price, stock, cold);
+        }
+    }
+
+    public static class ProductFactory
+    {
+        private static readonly Dictionary<string, IProductFactory> _factories = new Dictionary<string, IProductFactory>
+        {
+            { "Coffee", new CoffeeFactory() },
+            { "Snack", new SnackFactory() },
+            { "Beverage", new BeverageFactory() }
+        };
+
+        public static ProductBase CreateProduct(string type, string name, decimal price, int stock, string additionalParam)
+        {
+            if (_factories.TryGetValue(type, out var factory))
+            {
+                return factory.CreateProduct(name, price, stock, additionalParam);
+            }
+            throw new ArgumentException("Invalid product type");
+        }
     }
     #endregion
 
     #region Coffee Shop System
-    public class CoffeeShop
+    public class CoffeeShopSystem
     {
         private List<ProductBase> _menu = new List<ProductBase>();
-        private List<Order> _orderHistory = new List<Order>();
+        private List<Order> _orders = new List<Order>();
         private List<User> _users = new List<User>();
+        private int _orderCounter = 1;
 
         public IEnumerable<User> Users => _users.AsReadOnly();
-        public IEnumerable<ProductBase> Menu => _menu.AsReadOnly();
-
-        public CoffeeShop()
+        public CoffeeShopSystem()
         {
-            // Add default users
+            InitializeDefaultData();
+        }
+
+        private void InitializeDefaultData()
+        {
             _users.Add(new Admin("admin", "admin123"));
             _users.Add(new Customer("customer", "customer123"));
 
-            // Add default products
-            AddProduct(new Coffee("Espresso", 2.50m, 10, "Medium"));
-            AddProduct(new Coffee("Cappuccino", 3.00m, 8, "Large"));
-            AddProduct(new Coffee("Iced Latte", 4.20m, 12, "Grande"));
-            AddProduct(new FruitJuice("Croissant", 2.80m, 15, false));
-            AddProduct(new FruitJuice("Vegetarian Sandwich", 5.50m, 10, true));
-            AddProduct(new FruitJuice("Chocolate Cake", 4.00m, 8, false));
+            AddProduct(ProductFactory.CreateProduct("Coffee", "Espresso", 2.50m, 10, "Medium"));
+            AddProduct(ProductFactory.CreateProduct("Snack", "Croissant", 3.00m, 15, "true"));
+            AddProduct(ProductFactory.CreateProduct("Beverage", "Iced Tea", 2.00m, 20, "true"));
         }
 
-        public void AddProduct(ProductBase product)
-        {
-            _menu.Add(product);
-            DisplayMenu();
-        }
+        public void AddProduct(ProductBase product) => _menu.Add(product);
 
-        public void UpdateProduct(int id, decimal price, int stock)
-        {
-            var product = _menu.FirstOrDefault(p => p.Id == id);
-            if (product != null)
-            {
-                product.AdjustStock(stock - product.Stock);
-                _menu.Remove(product);
-                _menu.Add(ProductFactory.CreateProduct(product.GetType().Name, product.Name, price, stock, ""));
-                DisplayMenu();
-            }
-        }
-
-        public void RemoveProduct(int id)
-        {
-            var product = _menu.FirstOrDefault(p => p.Id == id);
-            if (product != null)
-            {
-                _menu.Remove(product);
-                DisplayMenu();
-            }
-        }
-
-        public void DisplayMenu()
-        {
-            Console.WriteLine("Coffee Shop Menu:");
-            foreach (var product in _menu)
-            {
-                product.Display();
-            }
-        }
-
-        public void DisplayOrderHistory()
-        {
-            Console.WriteLine("Order History:");
-            foreach (var order in _orderHistory)
-            {
-                order.DisplayOrder();
-            }
-        }
-
-        public void ProcessOrder(Order order)
+        public void ProcessOrder(Order order, User user)
         {
             if (order.TotalPrice > 0)
             {
-                _orderHistory.Add(order);
+                order.User = user;
+                _orders.Add(order);
+                if (user is Customer customer)
+                {
+                    customer.AddLoyaltyPoints(order.TotalPrice);
+                }
             }
-        }
-
-        public void AddUser(User user)
-        {
-            _users.Add(user);
         }
 
         public User AuthenticateUser(string username, string password)
         {
             return _users.FirstOrDefault(u => u.Username == username && u.Authenticate(password));
         }
-    }
-    #endregion
 
-    #region Factories
-    public static class ProductFactory
-    {
-        public static ProductBase CreateProduct(string type, string name, decimal price, int stock, string additionalInfo)
+        public void DisplayMenu()
         {
-            return type switch
+            Console.WriteLine("\nCurrent Menu:");
+            Console.WriteLine("ID | Category   | Name                | Price   | Stock | Details");
+            Console.WriteLine("-------------------------------------------------------------------");
+            foreach (var product in _menu.OrderBy(p => p.Id))
             {
-                nameof(Coffee) => new Coffee(name, price, stock, additionalInfo),
-                nameof(FruitJuice) => new FruitJuice(name, price, stock, bool.Parse(additionalInfo)),
-                _ => throw new ArgumentException("Invalid product type")
-            };
+                Console.Write($"{product.Id.ToString().PadRight(3)}| ");
+                Console.Write($"{product.Category.PadRight(10)}| ");
+                Console.Write($"{product.Name.PadRight(20)}| ");
+                Console.Write($"{product.Price.ToString("C").PadRight(7)}| ");
+                Console.Write($"{product.Stock.ToString().PadRight(5)}| ");
+                product.Display();
+            }
+        }
+
+        public ProductBase GetProductById(int id) => _menu.FirstOrDefault(p => p.Id == id);
+        public User GetUserById(int id) => _users.FirstOrDefault(u => u.Id == id);
+
+        public void AddUser(User user) => _users.Add(user);
+
+        public void UpdateProduct(int id, decimal newPrice, int newStock)
+        {
+            var product = _menu.FirstOrDefault(p => p.Id == id);
+            if (product != null)
+            {
+                product.Price = newPrice;
+                product.AdjustStock(newStock - product.Stock);
+            }
+        }
+
+        public void RemoveProduct(int id) => _menu.RemoveAll(p => p.Id == id);
+
+        public void DisplayOrderHistory(User currentUser)
+        {
+            var filteredOrders = currentUser.Role == "admin"
+                ? _orders
+                : _orders.Where(o => o.User.Id == currentUser.Id).ToList();
+
+            Console.WriteLine("\nOrder History:");
+            foreach (var order in filteredOrders)
+            {
+                order.DisplayOrder();
+                Console.WriteLine("-----------------------------");
+            }
+        }
+
+        public void RemoveUser(int id)
+        {
+            var user = _users.FirstOrDefault(u => u.Id == id);
+            if (user != null && user.Role != "admin")
+            {
+                _users.Remove(user);
+            }
         }
     }
     #endregion
 
-    #region Program
+    #region User Interface
     class Program
     {
+        private static CoffeeShopSystem _shop = new CoffeeShopSystem();
+
         static void Main(string[] args)
         {
-            CoffeeShop coffeeShop = new CoffeeShop();
-
             while (true)
             {
                 Console.Clear();
                 Console.WriteLine("=== Coffee Shop Management System ===");
                 Console.WriteLine("1. Login");
                 Console.WriteLine("2. Exit");
-                Console.Write("Choose an option: ");
+                var choice = GetInput("Choose an option: ");
 
-                var choice = Console.ReadLine();
-
-                if (choice == "1")
-                {
-                    HandleLogin(coffeeShop);
-                }
-                else if (choice == "2")
-                {
-                    break;
-                }
-                else
-                {
-                    Console.WriteLine("Invalid choice! Press any key to continue...");
-                    Console.ReadKey();
-                }
+                if (choice == "1") HandleLogin();
+                else if (choice == "2") break;
+                else ShowError("Invalid choice!");
             }
         }
 
-        static void HandleLogin(CoffeeShop coffeeShop)
+        static void HandleLogin()
         {
             Console.Clear();
             Console.WriteLine("=== Login ===");
-            string username = PromptForInput("Username: ");
-            string password = PromptForPassword("Password: ");
+            string username = GetInput("Username: ");
+            string password = GetPassword("Password: ");
 
-            var user = coffeeShop.AuthenticateUser(username, password);
+            var user = _shop.AuthenticateUser(username, password);
             if (user == null)
             {
-                Console.WriteLine("Invalid credentials! Press any key to continue...");
-                Console.ReadKey();
+                ShowError("Invalid credentials!");
                 return;
             }
 
-            HandleUserSession(coffeeShop, user);
+            HandleUserSession(user);
         }
 
-        static void HandleUserSession(CoffeeShop coffeeShop, User user)
+        static void HandleUserSession(User user)
         {
             bool sessionActive = true;
             while (sessionActive)
@@ -312,288 +405,235 @@ namespace CoffeeShopManagement
                 if (user.Role == "admin")
                 {
                     Console.WriteLine("4. Manage Menu");
-                    Console.WriteLine("5. Add User");
+                    Console.WriteLine("5. Manage Users");
                 }
 
                 Console.WriteLine("6. Logout");
-                Console.Write("Choose an option: ");
-
-                var choice = Console.ReadLine();
+                var choice = GetInput("Choose an option: ");
 
                 try
                 {
                     switch (choice)
                     {
-                        case "1":
-                            PlaceOrder(coffeeShop);
-                            break;
-                        case "2":
-                            ViewOrderHistory(coffeeShop);
-                            break;
-                        case "3":
-                            coffeeShop.DisplayMenu();
-                            Console.WriteLine("Press any key to return...");
-                            Console.ReadKey();
-                            break;
-                        case "4" when user.Role == "admin":
-                            ManageMenu(coffeeShop);
-                            break;
-                        case "5" when user.Role == "admin":
-                            AddUser(coffeeShop);
-                            break;
-                        case "6":
-                            sessionActive = false;
-                            break;
-                        default:
-                            Console.WriteLine("Invalid choice! Press any key to continue...");
-                            Console.ReadKey();
-                            break;
+                        case "1": PlaceOrder(user); break;
+                        case "2": ViewOrderHistory(user); break;
+                        case "3": ShowMenu(); break;
+                        case "4" when user.Role == "admin": ManageMenu(); break;
+                        case "5" when user.Role == "admin": ManageUsers(); break;
+                        case "6": sessionActive = false; break;
+                        default: ShowError("Invalid choice!"); break;
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error: {ex.Message}");
-                    Console.WriteLine("Press any key to continue...");
-                    Console.ReadKey();
+                    ShowError($"Error: {ex.Message}");
                 }
             }
         }
 
-        static void PlaceOrder(CoffeeShop coffeeShop)
+        static void ViewOrderHistory(User user)
         {
-            Order order = new Order();
-            while (true)
-            {
-                Console.Clear();
-                coffeeShop.DisplayMenu();
-                Console.WriteLine("\nEnter product ID to add to order (or 'done' to finish):");
-                var input = Console.ReadLine();
-
-                if (input?.ToLower() == "done") break;
-
-                if (int.TryParse(input, out int productId))
-                {
-                    var product = coffeeShop.Menu.FirstOrDefault(p => p.Id == productId);
-
-                    if (product == null)
-                    {
-                        Console.WriteLine("Product not found!");
-                    }
-                    else if (product.Stock <= 0)
-                    {
-                        Console.WriteLine("Product out of stock!");
-                    }
-                    else
-                    {
-                        try
-                        {
-                            product.AddToOrder(order);
-                            Console.WriteLine($"{product.Name} added to order!");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error: {ex.Message}");
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("Invalid input! Please enter a valid product ID.");
-                }
-
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadKey();
-            }
-
-            coffeeShop.ProcessOrder(order);
             Console.Clear();
-            order.DisplayOrder();
-            Console.WriteLine("Press any key to return to menu...");
+            _shop.DisplayOrderHistory(user);
+            Console.WriteLine("Press any key to return...");
             Console.ReadKey();
         }
 
-        static void ViewOrderHistory(CoffeeShop coffeeShop)
-        {
-            Console.Clear();
-            coffeeShop.DisplayOrderHistory();
-            Console.WriteLine("\nPress any key to return...");
-            Console.ReadKey();
-        }
-
-        static void ManageMenu(CoffeeShop coffeeShop)
+        static void ManageMenu()
         {
             while (true)
             {
                 Console.Clear();
-                Console.WriteLine("=== Menu Management ===");
+                _shop.DisplayMenu();
+                Console.WriteLine("\n=== Menu Management ===");
                 Console.WriteLine("1. Add Product");
                 Console.WriteLine("2. Update Product");
                 Console.WriteLine("3. Remove Product");
                 Console.WriteLine("4. Back to Main Menu");
-                Console.Write("Choose an option: ");
-
-                var choice = Console.ReadLine();
+                var choice = GetInput("Choose an option: ");
 
                 switch (choice)
                 {
-                    case "1":
-                        AddProduct(coffeeShop);
-                        break;
-                    case "2":
-                        UpdateProduct(coffeeShop);
-                        break;
-                    case "3":
-                        RemoveProduct(coffeeShop);
-                        break;
-                    case "4":
-                        return;
-                    default:
-                        Console.WriteLine("Invalid choice!");
-                        break;
+                    case "1": AddProduct(); break;
+                    case "2": UpdateProduct(); break;
+                    case "3": RemoveProduct(); break;
+                    case "4": return;
+                    default: ShowError("Invalid choice!"); break;
                 }
             }
         }
 
-        static void AddProduct(CoffeeShop coffeeShop)
+        static void ManageUsers()
+        {
+            while (true)
+            {
+                Console.Clear();
+                Console.WriteLine("=== User Management ===");
+                Console.WriteLine("1. List Users");
+                Console.WriteLine("2. Add User");
+                Console.WriteLine("3. Update User");
+                Console.WriteLine("4. Remove User");
+                Console.WriteLine("5. Back to Main Menu");
+                var choice = GetInput("Choose an option: ");
+
+                switch (choice)
+                {
+                    case "1": ListUsers(); break;
+                    case "2": AddUser(); break;
+                    case "3": UpdateUser(); break;
+                    case "4": RemoveUser(); break;
+                    case "5": return;
+                    default: ShowError("Invalid choice!"); break;
+                }
+            }
+        }
+
+        static void ListUsers()
         {
             Console.Clear();
-            Console.WriteLine("=== Add New Product ===");
-            string type = GetProductType();
-            string name = PromptForInput("Product name: ");
-            decimal price = GetDecimalInput("Price: ");
-            int stock = GetIntInput("Stock: ");
-            string additional = GetAdditionalInfo(type);
-
-            try
+            Console.WriteLine("ID | Username       | Role       | Loyalty Points");
+            Console.WriteLine("------------------------------------------------");
+            foreach (var user in _shop.Users)
             {
-                var product = ProductFactory.CreateProduct(type, name, price, stock, additional);
-                coffeeShop.AddProduct(product);
-                Console.WriteLine("Product added successfully!");
+                Console.WriteLine($"{user.Id.ToString().PadRight(3)}| " +
+                                  $"{user.Username.PadRight(15)}| " +
+                                  $"{user.Role.PadRight(10)}| " +
+                                  $"{user.LoyaltyPoints}");
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-
             Console.WriteLine("Press any key to continue...");
             Console.ReadKey();
         }
 
-        static void UpdateProduct(CoffeeShop coffeeShop)
-        {
-            Console.Clear();
-            Console.WriteLine("=== Update Product ===");
-            int id = GetIntInput("Enter product ID to update: ");
-            decimal price = GetDecimalInput("New Price: ");
-            int stock = GetIntInput("New Stock: ");
-
-            try
-            {
-                coffeeShop.UpdateProduct(id, price, stock);
-                Console.WriteLine("Product updated successfully!");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey();
-        }
-
-        static void RemoveProduct(CoffeeShop coffeeShop)
-        {
-            Console.Clear();
-            Console.WriteLine("=== Remove Product ===");
-            int id = GetIntInput("Enter product ID to remove: ");
-
-            try
-            {
-                coffeeShop.RemoveProduct(id);
-                Console.WriteLine("Product removed successfully!");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey();
-        }
-
-        static void AddUser(CoffeeShop coffeeShop)
+        static void AddUser()
         {
             Console.Clear();
             Console.WriteLine("=== Add New User ===");
-            string username = PromptForInput("Username: ");
-            string password = PromptForPassword("Password: ");
-            string role = PromptForInput("Role (admin/customer): ");
+            string username = GetInput("Username: ");
+            string password = GetPassword("Password: ");
+            string role = GetInput("Role (admin/customer): ");
 
             User newUser = role.Equals("admin", StringComparison.OrdinalIgnoreCase)
                 ? new Admin(username, password)
                 : new Customer(username, password);
 
-            coffeeShop.AddUser(newUser);
+            _shop.AddUser(newUser);
             Console.WriteLine("User  added successfully!");
             Console.WriteLine("Press any key to continue...");
             Console.ReadKey();
         }
 
-        static decimal GetDecimalInput(string prompt)
+        static void UpdateUser()
         {
+            Console.Clear();
+            Console.WriteLine("=== Update User ===");
+            int userId = GetIntInput("Enter user ID to update: ");
+            var user = _shop.GetUserById(userId);
+
+            if (user == null)
+            {
+                ShowError("User  not found!");
+                return;
+            }
+
+            Console.WriteLine($"Updating user: {user.Username}");
+            string newPassword = GetPassword("New password (leave empty to keep current): ");
+            if (!string.IsNullOrEmpty(newPassword))
+            {
+                user.UpdatePassword(newPassword);
+            }
+
+            if (user.Role == "customer")
+            {
+                string newRole = GetInput("Change role to admin? (y/n): ");
+                if (newRole.Equals("y", StringComparison.OrdinalIgnoreCase))
+                {
+                    _shop.RemoveUser(userId);
+                    _shop.AddUser(new Admin(user.Username, newPassword));
+                }
+            }
+
+            Console.WriteLine("User  updated successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static void RemoveUser()
+        {
+            Console.Clear();
+            Console.WriteLine("=== Remove User ===");
+            int userId = GetIntInput("Enter user ID to remove: ");
+            _shop.RemoveUser(userId);
+            Console.WriteLine("User  removed successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static void PlaceOrder(User user)
+        {
+            Console.Clear();
+            Console.WriteLine("=== Place Order ===");
+            var order = new Order();
             while (true)
             {
-                Console.Write(prompt);
-                if (decimal.TryParse(Console.ReadLine(), out decimal result))
+                _shop.DisplayMenu();
+                int productId = GetIntInput("Enter product ID to order (0 to finish): ");
+                if (productId == 0) break;
+
+                var product = _shop.GetProductById(productId);
+                if (product == null)
                 {
-                    return result;
+                    ShowError("Product not found!");
+                    continue;
                 }
-                Console.WriteLine("Invalid input. Please enter a valid decimal number.");
+
+                int quantity = GetIntInput($"Enter quantity for {product.Name}: ");
+                try
+                {
+                    product.AddToOrder(order, quantity);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    ShowError(ex.Message);
+                }
             }
+
+            _shop.ProcessOrder(order, user);
+            Console.WriteLine("Order placed successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static void ShowMenu()
+        {
+            Console.Clear();
+            _shop.DisplayMenu();
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static string GetInput(string prompt)
+        {
+            Console.Write(prompt);
+            return Console.ReadLine();
+        }
+
+        static string GetPassword(string prompt)
+        {
+            Console.Write(prompt);
+            return Console.ReadLine(); // In a real application, consider masking the password input
         }
 
         static int GetIntInput(string prompt)
         {
-            while (true)
-            {
-                Console.Write(prompt);
-                if (int.TryParse(Console.ReadLine(), out int result))
-                {
-                    return result;
-                }
-                Console.WriteLine("Invalid input. Please enter a valid integer.");
-            }
+            Console.Write(prompt);
+            return int.TryParse(Console.ReadLine(), out int result) ? result : 0;
         }
 
-        static string PromptForInput(string message)
+        static void ShowError(string message)
         {
-            Console.Write(message);
-            return Console.ReadLine();
-        }
-
-        static string PromptForPassword(string message)
-        {
-            Console.Write(message);
-            var password = string.Empty;
-            ConsoleKey key;
-            do
-            {
-                var keyInfo = Console.ReadKey(intercept: true);
-                key = keyInfo.Key;
-
-                if (key == ConsoleKey.Backspace && password.Length > 0)
-                {
-                    Console.Write("\b \b");
-                    password = password.Substring(0, password.Length - 1);
-                }
-                else if (!char.IsControl(keyInfo.KeyChar))
-                {
-                    Console.Write("*");
-                    password += keyInfo.KeyChar;
-                }
-            } while (key != ConsoleKey.Enter);
-            Console.WriteLine();
-            return password;
+            Console.WriteLine($"Error: {message}");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
         }
     }
     #endregion
