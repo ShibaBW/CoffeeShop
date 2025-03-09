@@ -7,7 +7,7 @@ namespace CoffeeShopManagement
     #region Core Domain Classes
     public interface IOrderable
     {
-        string Name { get; }
+        string Name { get;  }
         decimal Price { get; }
         int Stock { get; }
         void AdjustStock(int quantity);
@@ -86,12 +86,12 @@ namespace CoffeeShopManagement
         }
     }
 
-    public class Beverage : ProductBase
+    public class Tea : ProductBase
     {
-        public override string Category => "Beverage";
+        public override string Category => "Tea";
         public bool IsCold { get; private set; }
 
-        public Beverage(string name, decimal price, int stock, bool isCold)
+        public Tea(string name, decimal price, int stock, bool isCold)
             : base(name, price, stock)
         {
             IsCold = isCold;
@@ -222,12 +222,12 @@ namespace CoffeeShopManagement
         }
     }
 
-    public class BeverageFactory : IProductFactory
+    public class TeaFactory : IProductFactory
     {
         public ProductBase CreateProduct(string name, decimal price, int stock, string isCold)
         {
             bool cold = bool.Parse(isCold);
-            return new Beverage(name, price, stock, cold);
+            return new Tea(name, price, stock, cold);
         }
     }
 
@@ -237,7 +237,7 @@ namespace CoffeeShopManagement
         {
             { "Coffee", new CoffeeFactory() },
             { "Snack", new SnackFactory() },
-            { "Beverage", new BeverageFactory() }
+            { "Tea", new TeaFactory() }
         };
 
         public static ProductBase CreateProduct(string type, string name, decimal price, int stock, string additionalParam)
@@ -257,9 +257,9 @@ namespace CoffeeShopManagement
         private List<ProductBase> _menu = new List<ProductBase>();
         private List<Order> _orders = new List<Order>();
         private List<User> _users = new List<User>();
-        private int _orderCounter = 1;
 
         public IEnumerable<User> Users => _users.AsReadOnly();
+
         public CoffeeShopSystem()
         {
             InitializeDefaultData();
@@ -269,21 +269,21 @@ namespace CoffeeShopManagement
         {
             _users.Add(new Admin("admin", "admin123"));
             _users.Add(new Customer("customer", "customer123"));
+            _users.Add(new Customer("tuong", "tuong123"));
 
             AddProduct(ProductFactory.CreateProduct("Coffee", "Espresso", 2.50m, 10, "Medium"));
             AddProduct(ProductFactory.CreateProduct("Snack", "Croissant", 3.00m, 15, "true"));
-            AddProduct(ProductFactory.CreateProduct("Beverage", "Iced Tea", 2.00m, 20, "true"));
+            AddProduct(ProductFactory.CreateProduct("Tea", "Iced Tea", 2.00m, 20, "true"));
         }
 
         public void AddProduct(ProductBase product) => _menu.Add(product);
 
-        public void ProcessOrder(Order order, User user)
+        public void ProcessOrder(Order order)
         {
             if (order.TotalPrice > 0)
             {
-                order.User = user;
                 _orders.Add(order);
-                if (user is Customer customer)
+                if (order.User is Customer customer)
                 {
                     customer.AddLoyaltyPoints(order.TotalPrice);
                 }
@@ -298,8 +298,8 @@ namespace CoffeeShopManagement
         public void DisplayMenu()
         {
             Console.WriteLine("\nCurrent Menu:");
-            Console.WriteLine("ID | Category   | Name                | Price   | Stock | Details");
-            Console.WriteLine("-------------------------------------------------------------------");
+            Console.WriteLine("ID | Category  | Name                | Price  | Stock| Details");
+            Console.WriteLine("-----------------------------------------------------------------");
             foreach (var product in _menu.OrderBy(p => p.Id))
             {
                 Console.Write($"{product.Id.ToString().PadRight(3)}| ");
@@ -350,6 +350,11 @@ namespace CoffeeShopManagement
                 _users.Remove(user);
             }
         }
+
+        public List<User> GetCustomers()
+        {
+            return _users.Where(u => u.Role == "customer").ToList();
+        }
     }
     #endregion
 
@@ -379,7 +384,7 @@ namespace CoffeeShopManagement
             Console.Clear();
             Console.WriteLine("=== Login ===");
             string username = GetInput("Username: ");
-            string password = GetPassword("Password: ");
+            string password = PromptForPassword("Password: ");
 
             var user = _shop.AuthenticateUser(username, password);
             if (user == null)
@@ -463,6 +468,65 @@ namespace CoffeeShopManagement
             }
         }
 
+        static void AddProduct()
+        {
+            Console.Clear();
+            Console.WriteLine("=== Add New Product ===");
+            string name = GetInput("Product Name: ");
+            decimal price = GetDecimalInput("Price: ");
+            int stock = GetIntInput("Stock: ");
+            string category = GetInput("Category (Coffee/Snack/Beverage): ");
+            string additionalParam = category.Equals("Coffee", StringComparison.OrdinalIgnoreCase)
+                ? GetInput("Size: ")
+                : category.Equals("Snack", StringComparison.OrdinalIgnoreCase)
+                ? GetInput("Is Sweet (true/false): ")
+                : GetInput("Is Cold (true/false): ");
+
+            ProductBase product = ProductFactory.CreateProduct(category, name, price, stock, additionalParam);
+            _shop.AddProduct(product);
+            Console.WriteLine("Product added successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static void UpdateProduct()
+        {
+            Console.Clear();
+            Console.WriteLine("=== Update Product ===");
+            int productId = GetIntInput("Enter product ID to update: ");
+            var product = _shop.GetProductById(productId);
+
+            if (product == null)
+            {
+                ShowError("Product not found!");
+                return;
+            }
+
+            decimal newPrice = GetDecimalInput("New Price: ");
+            int newStock = GetIntInput("New Stock: ");
+            _shop.UpdateProduct(productId, newPrice, newStock);
+            Console.WriteLine("Product updated successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static void RemoveProduct()
+        {
+            Console.Clear();
+            Console.WriteLine("=== Remove Product ===");
+            int productId = GetIntInput("Enter product ID to remove: ");
+            _shop.RemoveProduct(productId);
+            Console.WriteLine("Product removed successfully!");
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadKey();
+        }
+
+        static decimal GetDecimalInput(string prompt)
+        {
+            Console.Write(prompt);
+            return decimal.TryParse(Console.ReadLine(), out decimal result) ? result : 0;
+        }
+
         static void ManageUsers()
         {
             while (true)
@@ -487,7 +551,6 @@ namespace CoffeeShopManagement
                 }
             }
         }
-
         static void ListUsers()
         {
             Console.Clear();
@@ -509,7 +572,7 @@ namespace CoffeeShopManagement
             Console.Clear();
             Console.WriteLine("=== Add New User ===");
             string username = GetInput("Username: ");
-            string password = GetPassword("Password: ");
+            string password = PromptForPassword("Password: ");
             string role = GetInput("Role (admin/customer): ");
 
             User newUser = role.Equals("admin", StringComparison.OrdinalIgnoreCase)
@@ -536,7 +599,7 @@ namespace CoffeeShopManagement
             }
 
             Console.WriteLine($"Updating user: {user.Username}");
-            string newPassword = GetPassword("New password (leave empty to keep current): ");
+            string newPassword = PromptForPassword("New password (leave empty to keep current): ");
             if (!string.IsNullOrEmpty(newPassword))
             {
                 user.UpdatePassword(newPassword);
@@ -573,6 +636,40 @@ namespace CoffeeShopManagement
             Console.Clear();
             Console.WriteLine("=== Place Order ===");
             var order = new Order();
+
+            if (user is Admin)
+            {
+                var customers = _shop.GetCustomers();
+                if (!customers.Any())
+                {
+                    ShowError("No customers available to take orders for!");
+                    return;
+                }
+
+                Console.WriteLine("Select a customer from list:");
+                foreach (var c in customers)
+                {
+                    Console.WriteLine($"{c.Id}: {c.Username}");
+                }
+
+                User selectedCustomer = null;
+                while (selectedCustomer == null)
+                {
+                    int customerId = GetIntInput("Enter customer ID: ");
+                    selectedCustomer = _shop.GetUserById(customerId);
+
+                    if (selectedCustomer == null || selectedCustomer.Role != "customer")
+                    {
+                        ShowError("Invalid customer ID! Please try again.");
+                    }
+                }
+                order.User = selectedCustomer;
+            }
+            else
+            {
+                order.User = user;
+            }
+
             while (true)
             {
                 _shop.DisplayMenu();
@@ -597,7 +694,7 @@ namespace CoffeeShopManagement
                 }
             }
 
-            _shop.ProcessOrder(order, user);
+            _shop.ProcessOrder(order);
             Console.WriteLine("Order placed successfully!");
             Console.WriteLine("Press any key to continue...");
             Console.ReadKey();
@@ -617,10 +714,29 @@ namespace CoffeeShopManagement
             return Console.ReadLine();
         }
 
-        static string GetPassword(string prompt)
+        static string PromptForPassword(string message)
         {
-            Console.Write(prompt);
-            return Console.ReadLine(); // In a real application, consider masking the password input
+            Console.Write(message);
+            var password = string.Empty;
+            ConsoleKey key;
+            do
+            {
+                var keyInfo = Console.ReadKey(intercept: true);
+                key = keyInfo.Key;
+
+                if (key == ConsoleKey.Backspace && password.Length > 0)
+                {
+                    Console.Write("\b \b");
+                    password = password.Substring(0, password.Length - 1);
+                }
+                else if (!char.IsControl(keyInfo.KeyChar))
+                {
+                    Console.Write("*");
+                    password += keyInfo.KeyChar;
+                }
+            } while (key != ConsoleKey.Enter);
+            Console.WriteLine();
+            return password;
         }
 
         static int GetIntInput(string prompt)
